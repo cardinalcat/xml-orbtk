@@ -4,7 +4,7 @@ use orbtk::{
     tree::*,
     utils::{Point, Rectangle},
 };
-use ego_tree::iter::FirstChildren;
+use ego_tree::NodeRef;
 use scraper::{element_ref::ElementRef, node::Element, Html, Selector, node::Node};
 use std::str::FromStr;
 use std::io::Error;
@@ -68,24 +68,24 @@ macro_rules! generate_enum {
             )*
         }
         impl $name {
-            pub fn build(self, ctx: &mut BuildContext) -> Option<Entity>{
+            pub fn build(self, ctx: &mut BuildContext) -> Entity{
                 match self{
                     $(
                         $name::$vari(val) => {
-                            Some(val.build(ctx))
+                            val.build(ctx)
                         },
                     )*
-                    _ => None,
+                    _ => panic!("unhandled widget type"),
                 }
             }
-            pub fn child(self, child: Entity) -> Option<Self>{
+            pub fn child(self, child: Entity) -> Self{
                 match self{
                     $(
                         $name::$vari(val) => {
-                            Some($name::$vari(val.child(child)))
+                            $name::$vari(val.child(child))
                         },
                     )*
-                    _ => None,
+                    _ => panic!("unhandled widget type"),
                 }
             }
         }
@@ -123,6 +123,8 @@ generate_attribute! (Window,
     String => id,
     f64 => max_height,
     f64 => max_width,
+    f64 => min_width,
+    f64 => min_height,
     f32 => opacity,
     bool => resizeable,
     bool => always_on_top
@@ -131,11 +133,18 @@ generate_attribute! (Button,
     String => text
 );
 generate_attribute! (TextBox,
-    String => text
+    String => text,
+    f64 => width,
+    f64 => height,
+    f64 => max_width,
+    f64 => max_height,
+    f64 => min_width,
+    f64 => min_height
 );
-generate_enum! (XmlElement, TextBox => TextBox, Window => Window, Button => Button);
+generate_enum! (XmlElement, textbox => TextBox, Window => Window, Button => Button);
 impl WindowParser {
     pub fn new(text: String, id: Option<String>, index: usize) -> Self {
+        //let map: HashMap<&str, Fn(FromStr) -> Widget> = 
         Self { text, id, index }
     }
     pub fn build(&mut self, ctx: &mut BuildContext) -> Entity {
@@ -151,28 +160,60 @@ impl WindowParser {
         let value = element.value();
         match value.name() {
             "window" => {
-                if element.has_children(){
-                    Window::create().parse_attributes(&value).child(Self::handle_children(element.first_children(), ctx)).build(ctx)
-                }
-                else {
-                    Window::create().parse_attributes(&value).build(ctx)
-                }
+                let recelement = XmlElement::from_str("Window").unwrap();
+                let (_, elem) = Self::handle_children(element.first_child().unwrap(),ctx,recelement);
+                elem.unwrap().build(ctx)
             },
             _ => panic!("window should be top level widget"),
         }
     }
-    fn handle_children(mut children: FirstChildren<Node>, ctx: &mut BuildContext) -> Entity{
-        while let Some(html_node) = children.next(){
-            if let Node::Element(elem) = html_node.value(){
-                let xmlelement = XmlElement::from_str(elem.name());
-                let mut item = xmlelement.unwrap();
-                let ent = if html_node.has_children(){
-                    item.child(Self::handle_children(html_node.first_children(),ctx)).unwrap().build(ctx)
-                }else{
-                    item.build(ctx)
-                };
+    fn handle_children(mut noderef: NodeRef<Node>, ctx: &mut BuildContext, mut parent: XmlElement) -> (Option<Entity>, Option<XmlElement>){
+        if let Node::Element(html_element) = noderef.value(){     
+            println!("element name: {}", html_element.name());
+            let mut xmlelement = XmlElement::from_str(html_element.name()).unwrap().parse_attributes(&html_element);
+            let (curent, _): (Option<Entity>, Option<XmlElement>) = match noderef.first_child(){
+                Some(child) => {
+                    let (_, xmlelem) = Self::handle_children(child, ctx, xmlelement);
+                    let xmlelement = xmlelem.unwrap();
+                    //xmlelement = xmlelement.child(childent);
+                    (Some(xmlelement.build(ctx)), None)
+                },
+                None => {
+                    (Some(xmlelement.build(ctx)), None)
+                },
+            };
+            match noderef.next_sibling(){
+                Some(sibiling) => {
+                    parent = parent.child(curent.unwrap());
+                    Self::handle_children(sibiling, ctx, parent)
+                },
+                None => {
+                    parent = parent.child(curent.unwrap());
+                    (curent, Some(parent))
+                },
+            }
+        }else{
+            match noderef.next_sibling(){
+                Some(sibiling) => {
+                    Self::handle_children(sibiling, ctx, parent)
+                },
+                None => {
+                    (None, Some(parent))
+                },
             }
         }
-        Button::create().build(ctx)
     }
+
 }
+/*
+if let Node::Element(elem) = html_node.value(){
+                let xmlelement = XmlElement::from_str(elem.name());
+                let mut item = xmlelement.unwrap().parse_attributes(&elem);
+                let ent = if html_node.has_children(){
+                    let (ent, item) = Self::handle_children(html_node.first_child().unwrap(),ctx, item);
+                    item.child(ent).unwrap().build(ctx).unwrap()
+                }else{
+                    item.build(ctx).unwrap()
+                };
+                return ent;
+            }*/
