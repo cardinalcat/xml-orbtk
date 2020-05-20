@@ -1,0 +1,3 @@
+<window id="mainwindow" name="main" width="600" height="600" title="main_window" borderless="false" always_on_top="true", resizeable="false">
+	<Button text="clickme"></Button>
+</window>
