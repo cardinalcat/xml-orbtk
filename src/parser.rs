@@ -1,6 +1,6 @@
 use orbtk::{
     prelude::*,
-    shell::{ShellRunner, WindowBuilder, WindowShell},
+    shell::{WindowBuilder},
     tree::*,
     utils::{Point, Rectangle},
 };
@@ -34,6 +34,7 @@ pub struct WindowParser {
     pub index: usize,
     pub id: Option<String>,
     pub text: String,
+    pub themebuilder: Option<orbtk::css_engine::ThemeBuilder>,
 }
 pub trait Parser {
     fn parse_attributes(self, element: &Element) -> Self;
@@ -68,6 +69,78 @@ macro_rules! generate_enum {
             )*
         }
         impl $name {
+            pub fn theme(mut self, theme: orbtk::css_engine::Theme) -> Self{
+                match self{
+                    Self::Window(win) => {
+                        Self::Window(win.theme(theme))
+                    }
+                    _ => panic!("invocation of unsupported feature"),
+                }
+            }
+        }
+        impl Parser for $name {
+            fn parse_attributes(self, element: &Element) -> Self{
+                match self{
+                    $(
+                        $name::$vari(val) => {
+                            $name::$vari(val.parse_attributes(element))
+                        },
+                    )*
+                    _ => panic!("unhandled widget type"),
+                }
+            }
+        }
+    }
+}
+impl Parser for Row{
+    fn parse_attributes(mut self, element: &Element) -> Self{
+        match element.attr("height"){
+            Some(val) => {
+                self.height = RowHeight::from_str(val).unwrap();
+            },
+            None => (),
+        }
+        match element.attr("max_height"){
+            Some(val) => {
+                self.max_height = val.parse::<f64>().unwrap();
+            },
+            None => (),
+        }
+        match element.attr("min_height"){
+            Some(val) => {
+                self.min_height = val.parse::<f64>().unwrap();
+            },
+            None => (),
+        }
+        self
+    }
+}
+impl Parser for Column{
+    fn parse_attributes(mut self, element: &Element) -> Self{
+        match element.attr("width"){
+            Some(val) => {
+                self.width = ColumnWidth::from_str(val).unwrap();
+            },
+            None => (),
+        }
+        match element.attr("max_width"){
+            Some(val) => {
+                self.max_width = val.parse::<f64>().unwrap();
+            },
+            None => (),
+        }
+        match element.attr("min_width"){
+            Some(val) => {
+                self.min_width = val.parse::<f64>().unwrap();
+            },
+            None => (),
+        }
+        self
+    }
+}
+macro_rules! fromstr_for_enum {
+    ($name:ident, $( $vari:ident => $type:ty ),*) => {
+        impl $name {
             pub fn build(self, ctx: &mut BuildContext) -> Entity{
                 match self{
                     $(
@@ -88,27 +161,13 @@ macro_rules! generate_enum {
                     _ => panic!("unhandled widget type"),
                 }
             }
-        }
-        impl Parser for $name {
-            fn parse_attributes(self, element: &Element) -> Self{
-                match self{
-                    $(
-                        $name::$vari(val) => {
-                            $name::$vari(val.parse_attributes(element))
-                        },
-                    )*
-                    _ => panic!("unhandled widget type"),
-                }
-            }
-        }
-        impl FromStr for $name {
-            type Err = std::io::Error;
-            fn from_str(s: &str) -> Result<Self, Self::Err>{
-                //let matcher = 
-                match s {
+            pub fn parse_str(s: &str) -> Result<Self, std::io::Error>{
+                match s{
                     $(
                         stringify!($vari) => Ok($name::$vari(<$type>::create())),
                     )*
+                    "row" => Ok(Self::row(Row::create().build())),
+                    "column" => Ok(Self::column(Column::create().build())),
                     _ => Err(std::io::Error::new(std::io::ErrorKind::Other, "couldn't parse widget type")),
                 }
             }
@@ -141,28 +200,53 @@ generate_attribute! (TextBox,
     f64 => min_width,
     f64 => min_height
 );
-generate_enum! (XmlElement, textbox => TextBox, Window => Window, Button => Button);
+generate_attribute! (Grid,
+    f64 => width,
+    f64 => height,
+    f64 => max_width,
+    f64 => max_height,
+    f64 => min_width,
+    f64 => min_height
+);
+generate_enum! (XmlElement, textbox => TextBox, Window => Window, button => Button, grid => Grid, row => Row, column => Column);
+fromstr_for_enum! (XmlElement, textbox => TextBox, Window => Window, button => Button, grid => Grid);
+
 impl WindowParser {
     pub fn new(text: String, id: Option<String>, index: usize) -> Self {
         //let map: HashMap<&str, Fn(FromStr) -> Widget> = 
-        Self { text, id, index }
+        Self { text, id, index, themebuilder: None }
     }
-    pub fn build(&mut self, ctx: &mut BuildContext) -> Entity {
+    pub fn add_css_path(mut self, path: &str) -> Self{
+        println!("add css path called in parser");
+        if let Some(themebuilder) = self.themebuilder{
+            self.themebuilder = Some(themebuilder.extension_path(path));
+            self
+        }else{
+            self.themebuilder = Some(Theme::create_from_path(path));
+            self
+        }
+    }
+    pub fn build(&self, ctx: &mut BuildContext) -> Entity {
+        println!("self: {:?}", self);
         let html = Html::parse_fragment(&self.text);
         let selector = Selector::parse("window").unwrap();
         if let Some(element) = html.select(&selector).next() {
-            Self::build_elements(element, ctx)
+            Self::build_elements(element, ctx, self.themebuilder.clone())
         } else {
             panic!("no windows found");
         }
     }
-    pub fn build_elements(element: ElementRef, ctx: &mut BuildContext) -> Entity {
+    pub fn build_elements(element: ElementRef, ctx: &mut BuildContext, themebuilder: Option<orbtk::css_engine::ThemeBuilder>) -> Entity {
         let value = element.value();
+        let theme = match themebuilder{
+            Some(builder) => builder.build(),
+            None => orbtk::default_theme(),
+        };
         match value.name() {
             "window" => {
-                let recelement = XmlElement::from_str("Window").unwrap();
+                let recelement = XmlElement::parse_str("Window").unwrap();
                 let (_, elem) = Self::handle_children(element.first_child().unwrap(),ctx,recelement);
-                elem.unwrap().build(ctx)
+                elem.unwrap().theme(theme).parse_attributes(&value).build(ctx)
             },
             _ => panic!("window should be top level widget"),
         }
@@ -170,7 +254,7 @@ impl WindowParser {
     fn handle_children(mut noderef: NodeRef<Node>, ctx: &mut BuildContext, mut parent: XmlElement) -> (Option<Entity>, Option<XmlElement>){
         if let Node::Element(html_element) = noderef.value(){     
             println!("element name: {}", html_element.name());
-            let mut xmlelement = XmlElement::from_str(html_element.name()).unwrap().parse_attributes(&html_element);
+            let mut xmlelement = XmlElement::parse_str(html_element.name()).unwrap().parse_attributes(&html_element);
             let (curent, _): (Option<Entity>, Option<XmlElement>) = match noderef.first_child(){
                 Some(child) => {
                     let (_, xmlelem) = Self::handle_children(child, ctx, xmlelement);

@@ -1,3 +1,8 @@
-<window id="mainwindow" name="main" width="600" height="600" title="main_window" borderless="false" always_on_top="true", resizeable="false">
-	<TextBox text="clickme" max_width="200"></TextBox>
+<window id="mainwindow" name="main" title="main_window" borderless="false" always_on_top="true", resizeable="true">
+	<Grid id="view">
+	<row height="auto">
+		<TextBox text="click me" min_width="2000" id="textbox"></TextBox>
+		<button text="this is a button" width="200" id="button"></button>
+	</row>
+	</Grid>
 </window>
